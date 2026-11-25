@@ -1,4 +1,5 @@
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
 const signUp = async (req, res) => {
@@ -60,4 +61,49 @@ const signUp = async (req, res) => {
   }
 };
 
-module.exports = { signUp };
+const signIn = async (req, res) => {
+  try {
+    const { identifier, password } = req.body || {};
+
+    if (!identifier || !password) {
+      return res
+        .status(400)
+        .json({ message: "Email or phone and password are required" });
+    }
+
+    const id = String(identifier).trim();
+    const query = id.includes("@")
+      ? { email: id.toLowerCase() }
+      : { phone: id };
+
+    const user = await User.findOne(query).select("+password");
+    const isMatch = user ? await bcrypt.compare(password, user.password) : false;
+
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid email/phone or password" });
+    }
+
+    const token = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
+    );
+
+    res.json({
+      message: "Signed in successfully",
+      token,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error("Sign-in error:", error);
+    res.status(500).json({ message: "Something went wrong" });
+  }
+};
+
+module.exports = {  signUp, signIn };
