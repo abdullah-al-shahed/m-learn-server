@@ -106,4 +106,18 @@ const signIn = async (req, res) => {
   }
 };
 
-module.exports = {  signUp, signIn };
+const getMe = async (req, res) => {
+  const user = req.user;
+  res.json({
+    user: {
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+    },
+  });
+};
+
+
+module.exports = {  signUp, signIn , getMe};
