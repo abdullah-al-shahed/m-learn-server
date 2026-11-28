@@ -31,6 +31,11 @@ const attemptSchema = new mongoose.Schema(
     endsAt: { type: Date, required: true },
     submittedAt: { type: Date },
     score: { type: Number, default: 0 },
+    autoScore: { type: Number, default: 0 }, // marks from mcq + truefalse
+    // questionId -> marks given by the teacher for short answers
+    shortMarks: { type: Map, of: Number, default: {} },
+    totalMarks: { type: Number, default: 0 },
+    needsReview: { type: Boolean, default: false }, // short answers waiting for the teacher
   },
   { timestamps: true }
 );
