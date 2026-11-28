@@ -36,6 +36,74 @@ const buildPayload = async (attempt) => {
   };
 };
 
+// Marks mcq and truefalse answers against the correct answers
+const gradeAttempt = async (attempt) => {
+  const questions = await Question.find({ _id: { $in: attempt.questionOrder } });
+
+  let autoScore = 0;
+  let totalMarks = 0;
+  let needsReview = false;
+
+  for (const q of questions) {
+    totalMarks += q.marks;
+    const given = attempt.answers.get(String(q._id));
+
+    if (q.type === "short") {
+      if (given) needsReview = true;
+      continue;
+    }
+
+    if (given !== undefined && String(given).trim().toLowerCase() === q.correctAnswer) {
+      autoScore += q.marks;
+    }
+  }
+
+  return { autoScore, totalMarks, needsReview };
+};
+
+// Closes an attempt exactly once, even if called twice at the same time
+const finalizeAttempt = async (attempt, submittedAt = new Date()) => {
+  const { autoScore, totalMarks, needsReview } = await gradeAttempt(attempt);
+
+  const updated = await Attempt.findOneAndUpdate(
+    { _id: attempt._id, status: "in_progress" },
+    {
+      $set: {
+        status: "submitted",
+        submittedAt,
+        autoScore,
+        score: autoScore,
+        totalMarks,
+        needsReview,
+      },
+    },
+    { new: true }
+  );
+
+  return updated || (await Attempt.findById(attempt._id));
+};
+
+// Submits every attempt whose time ran out (called every minute)
+const finalizeExpiredAttempts = async () => {
+  const expired = await Attempt.find({
+    status: "in_progress",
+    endsAt: { $lt: new Date(Date.now() - GRACE_MS) },
+  }).limit(200);
+
+  for (const attempt of expired) {
+    await finalizeAttempt(attempt, attempt.endsAt);
+  }
+};
+
+const summarize = (attempt) => ({
+  attemptId: attempt._id,
+  status: attempt.status,
+  submittedAt: attempt.submittedAt,
+  score: attempt.score,
+  totalMarks: attempt.totalMarks,
+  needsReview: attempt.needsReview,
+});
+
 // Student: start an exam, or resume an unfinished attempt
 const startExam = async (req, res) => {
   try {
@@ -64,16 +132,16 @@ const startExam = async (req, res) => {
       status: "in_progress",
     });
     if (running) {
-      if (running.endsAt <= now) {
-        return res
-          .status(400)
-          .json({ message: "Your time for this attempt is over" });
+      if (running.endsAt > now) {
+        return res.json({
+          message: "Resuming your attempt",
+          ...(await buildPayload(running)),
+        });
       }
-      return res.json({
-        message: "Resuming your attempt",
-        ...(await buildPayload(running)),
-      });
+      // Time ran out earlier without a submit: close it now and continue
+      await finalizeAttempt(running, running.endsAt);
     }
+
 
     const used = await Attempt.countDocuments({
       student: req.user._id,
@@ -186,5 +254,42 @@ const saveAnswers = async (req, res) => {
   }
 };
 
+// Student: submit the attempt and get the score
+const submitAttempt = async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    if (!mongoose.isValidObjectId(attemptId)) {
+      return res.status(404).json({ message: "Attempt not found" });
+    }
 
-module.exports = { startExam, saveAnswers };
+    const attempt = await Attempt.findOne({
+      _id: attemptId,
+      student: req.user._id,
+    });
+    if (!attempt) {
+      return res.status(404).json({ message: "Attempt not found" });
+    }
+
+    // Safe to call twice (e.g. a retry after a slow network)
+    if (attempt.status === "submitted") {
+      return res.json({
+        message: "Already submitted",
+        result: summarize(attempt),
+      });
+    }
+
+    const done = await finalizeAttempt(attempt);
+    res.json({ message: "Submitted", result: summarize(done) });
+  } catch (error) {
+    console.error("Submit attempt error:", error);
+    res.status(500).json({ message: "Something went wrong" });
+  }
+};
+
+
+module.exports = {
+  startExam,
+  saveAnswers,
+  submitAttempt,
+  finalizeExpiredAttempts,
+};

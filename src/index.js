@@ -25,9 +25,18 @@ app.use("/api/exams", require("./routes/examRoutes"));
 app.use("/api/exams/:examId/questions", require("./routes/questionRoutes"));
 app.use("/api/attempts", require("./routes/attemptRoutes"));
 
+const { finalizeExpiredAttempts } = require("./controllers/attemptController");
+
 // Connect to database, then start server
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Every minute, submit attempts whose time has run out
+  setInterval(() => {
+    finalizeExpiredAttempts().catch((error) =>
+      console.error("Auto-submit error:", error.message)
+    );
+  }, 60 * 1000);
 });
