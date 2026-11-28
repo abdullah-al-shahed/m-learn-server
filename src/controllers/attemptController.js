@@ -3,6 +3,8 @@ const Exam = require("../models/Exam");
 const Question = require("../models/Question");
 const Attempt = require("../models/Attempt");
 
+const GRACE_MS = 10 * 1000; // extra time allowed for slow networks
+const MAX_ANSWER_LENGTH = 2000;
 // Fisher-Yates shuffle (returns a new array)
 const shuffle = (array) => {
   const result = [...array];
@@ -118,4 +120,71 @@ const startExam = async (req, res) => {
   }
 };
 
-module.exports = { startExam };
+// Student: save answers (only the changed ones are needed)
+const saveAnswers = async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    if (!mongoose.isValidObjectId(attemptId)) {
+      return res.status(404).json({ message: "Attempt not found" });
+    }
+
+    const incoming = req.body && req.body.answers;
+    if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+      return res.status(400).json({ message: "answers must be an object" });
+    }
+
+    const attempt = await Attempt.findOne({
+      _id: attemptId,
+      student: req.user._id,
+    });
+    if (!attempt) {
+      return res.status(404).json({ message: "Attempt not found" });
+    }
+    if (attempt.status !== "in_progress") {
+      return res
+        .status(400)
+        .json({ message: "This attempt is already submitted" });
+    }
+    if (Date.now() > attempt.endsAt.getTime() + GRACE_MS) {
+      return res.status(400).json({ message: "Time is over" });
+    }
+
+    const validIds = new Set(attempt.questionOrder.map(String));
+    const set = {};
+    const unset = {};
+
+    for (const [questionId, value] of Object.entries(incoming)) {
+      if (!validIds.has(questionId)) {
+        return res.status(400).json({ message: "Unknown question in answers" });
+      }
+      const text = String(value ?? "");
+      if (text.length > MAX_ANSWER_LENGTH) {
+        return res.status(400).json({ message: "Answer is too long" });
+      }
+      if (text.trim() === "") {
+        unset[`answers.${questionId}`] = ""; // empty answer clears it
+      } else {
+        set[`answers.${questionId}`] = text;
+      }
+    }
+
+    const update = {};
+    if (Object.keys(set).length) update.$set = set;
+    if (Object.keys(unset).length) update.$unset = unset;
+
+    if (Object.keys(update).length) {
+      await Attempt.updateOne(
+        { _id: attempt._id, status: "in_progress" },
+        update
+      );
+    }
+
+    res.json({ message: "Saved", savedAt: new Date() });
+  } catch (error) {
+    console.error("Save answers error:", error);
+    res.status(500).json({ message: "Something went wrong" });
+  }
+};
+
+
+module.exports = { startExam, saveAnswers };
