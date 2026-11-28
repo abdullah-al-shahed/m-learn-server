@@ -21,6 +21,7 @@ app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/courses", require("./routes/courseRoutes"));
 app.use("/api/courses/:courseId/lessons", require("./routes/lessonRoutes"));
 app.use("/api/enrollments", require("./routes/enrollmentRoutes"));
+app.use("/api/exams", require("./routes/examRoutes"));
 
 // Connect to database, then start server
 connectDB().then(() => {
